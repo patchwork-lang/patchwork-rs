@@ -1161,7 +1161,9 @@ checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 
 [[package]]
 name = "sacp"
-version = "8.0.0"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7679525f5c2f4e1cb4b07e3684c4b050b34bafa0f908852879b7411522ff6626"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -1184,7 +1186,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-conductor"
-version = "8.0.0"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "234e8dcd4788b957ba275a29229c2afe33f6634f56d212ab17e5b8c81ce88075"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -1215,7 +1219,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-derive"
-version = "8.0.0"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70a36c27381224c2fc970935c887b26f48ff78105003d9abfa04c2e808569d3b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1224,7 +1230,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-tokio"
-version = "8.0.0"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b7ad0b5f6b3585cabfc05ea726e4f9fa63ec3ba4cbedb20dcd3e3a45dbd1ad4"
 dependencies = [
  "futures",
  "sacp",
@@ -1237,7 +1245,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-trace-viewer"
-version = "8.0.0"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42dfb08c7454e7396b37ef690873c6f3ff83d0b1702905c9b87f0bb5cc04293c"
 dependencies = [
  "anyhow",
  "axum",
