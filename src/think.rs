@@ -1,6 +1,7 @@
 //! ThinkBuilder for composing prompts with tools.
 
 use std::fmt::{Debug, Display};
+use std::marker::PhantomData;
 
 use sacp::mcp_server::{McpContext, McpServer, McpServerBuilder, ToolFnResponder};
 use sacp::schema::{
@@ -8,7 +9,7 @@ use sacp::schema::{
     RequestPermissionResponse, SessionNotification,
 };
 use sacp::util::MatchMessage;
-use sacp::{ChainResponder, ClientToAgent, JrConnectionCx, JrResponder, NullResponder};
+use sacp::{BoxFuture, ChainResponder, ClientToAgent, JrConnectionCx, JrResponder, NullResponder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::{debug, info, instrument, trace, warn};
@@ -21,11 +22,12 @@ use crate::Error;
 ///
 /// The type parameter `R` tracks the responder chain for registered tools,
 /// allowing tools to capture references from the stack frame.
-pub struct ThinkBuilder<R: JrResponder<ClientToAgent> = NullResponder> {
+pub struct ThinkBuilder<'bound, R: JrResponder<ClientToAgent>, Output> {
     cx: JrConnectionCx<ClientToAgent>,
     segments: Vec<Segment>,
     server: McpServerBuilder<ClientToAgent, R>,
     explicit_spacing: bool,
+    phantom: PhantomData<fn(&'bound R) -> Output>,
 }
 
 /// A segment of the prompt being built.
@@ -34,7 +36,10 @@ enum Segment {
     ToolReference(String),
 }
 
-impl ThinkBuilder<NullResponder> {
+impl<'bound, Output> ThinkBuilder<'bound, NullResponder, Output>
+where
+    Output: Send + JsonSchema + DeserializeOwned + 'static,
+{
     pub(crate) fn new(cx: JrConnectionCx<ClientToAgent>) -> Self {
         Self {
             cx,
@@ -42,6 +47,7 @@ impl ThinkBuilder<NullResponder> {
             server: McpServer::builder("patchwork".to_string())
                 .instructions("You have access to tools. Call return_result when done."),
             explicit_spacing: false,
+            phantom: PhantomData,
         }
         .textln("Please complete the following task to the best of your ability,")
         .textln("No further instructions will be given,")
@@ -57,7 +63,10 @@ impl ThinkBuilder<NullResponder> {
     }
 }
 
-impl<R: JrResponder<ClientToAgent>> ThinkBuilder<R> {
+impl<'bound, R: JrResponder<ClientToAgent>, Output> ThinkBuilder<'bound, R, Output>
+where
+    Output: Send + JsonSchema + DeserializeOwned + 'static,
+{
     /// Add literal text to the prompt.
     pub fn text(mut self, text: &str) -> Self {
         self.segments.push(Segment::Text(text.to_string()));
@@ -162,7 +171,7 @@ impl<R: JrResponder<ClientToAgent>> ThinkBuilder<R> {
         description: &str,
         func: F,
         tool_future_hack: H,
-    ) -> ThinkBuilder<ChainResponder<R, ToolFnResponder<F, I, O, ClientToAgent>>>
+    ) -> ThinkBuilder<'bound, ChainResponder<R, ToolFnResponder<F, I, O, ClientToAgent>>, Output>
     where
         I: JsonSchema + DeserializeOwned + Send + 'static,
         O: JsonSchema + Serialize + Send + 'static,
@@ -184,6 +193,7 @@ impl<R: JrResponder<ClientToAgent>> ThinkBuilder<R> {
                 .server
                 .tool_fn_mut(name, description, func, tool_future_hack),
             explicit_spacing: self.explicit_spacing,
+            phantom: PhantomData,
         }
     }
 
@@ -200,7 +210,7 @@ impl<R: JrResponder<ClientToAgent>> ThinkBuilder<R> {
         description: &str,
         func: F,
         tool_future_hack: H,
-    ) -> ThinkBuilder<ChainResponder<R, ToolFnResponder<F, I, O, ClientToAgent>>>
+    ) -> ThinkBuilder<'bound, ChainResponder<R, ToolFnResponder<F, I, O, ClientToAgent>>, Output>
     where
         I: JsonSchema + DeserializeOwned + Send + 'static,
         O: JsonSchema + Serialize + Send + 'static,
@@ -221,6 +231,7 @@ impl<R: JrResponder<ClientToAgent>> ThinkBuilder<R> {
                 .server
                 .tool_fn_mut(name, description, func, tool_future_hack),
             explicit_spacing: self.explicit_spacing,
+            phantom: PhantomData,
         }
     }
 
@@ -239,7 +250,7 @@ impl<R: JrResponder<ClientToAgent>> ThinkBuilder<R> {
     ///     .await?;
     /// ```
     #[instrument(name = "ThinkBuilder::run", skip_all)]
-    pub async fn run<T>(self) -> Result<T, Error>
+    async fn run<T>(self) -> Result<T, Error>
     where
         T: JsonSchema + DeserializeOwned + Send + 'static,
         R: Send,
@@ -331,6 +342,19 @@ impl<R: JrResponder<ClientToAgent>> ThinkBuilder<R> {
         }
 
         output.ok_or(Error::NoResult)
+    }
+}
+
+impl<'bound, R: JrResponder<ClientToAgent>, Output> IntoFuture for ThinkBuilder<'bound, R, Output>
+where
+    Output: Send + JsonSchema + DeserializeOwned + 'static,
+{
+    type Output = Result<Output, Error>;
+
+    type IntoFuture = BoxFuture<'bound, Result<Output, Error>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
     }
 }
 

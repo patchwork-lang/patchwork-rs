@@ -37,7 +37,6 @@ for path in &files {
     let summary: Summary = patchwork.think()
         .text("Summarize this file:")
         .display(&contents)
-        .run()
         .await?;
 }
 ```
@@ -60,7 +59,6 @@ async fn main() -> Result<(), patchwork::Error> {
         .text("Say hello to")
         .display(&name)
         .text("in a friendly way.")
-        .run()
         .await?;
     
     println!("{}", result);  // "Hello Alice! Great to meet you!"
@@ -86,7 +84,6 @@ let summary: String = patchwork.think()
     .debug(&file_path)
     .text(":\n\n")
     .display(&contents)
-    .run()
     .await?;
 ```
 
@@ -135,7 +132,6 @@ let result: String = patchwork.think()
         sacp::tool_fn_mut!(),
     )
     .text("on each mean-spirited phrase.")
-    .run()
     .await?;
 ```
 
@@ -165,7 +161,6 @@ let _: () = patchwork.think()
         },
         sacp::tool_fn_mut!(),
     )
-    .run()
     .await?;
 
 // After the think block, `results` contains all recorded items
@@ -196,7 +191,6 @@ let result: String = patchwork.think()
         async |paras: SummarizeInput, _cx| Ok(summarize_all(&paras)),
         sacp::tool_fn_mut!(),
     )
-    .run()
     .await?;
 ```
 
@@ -204,7 +198,7 @@ Here `classify` is available but not explicitly referenced with `<mcp_tool>` tag
 
 ### Structured output
 
-The return type of `.run()` can be any type that implements `JsonSchema + DeserializeOwned`:
+The return type is inferred from the binding and can be any type that implements `JsonSchema + DeserializeOwned`:
 
 ```rust
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -217,7 +211,6 @@ struct Analysis {
 let analysis: Analysis = patchwork.think()
     .text("Analyze the sentiment of: ")
     .display(&text)
-    .run()
     .await?;
 ```
 
@@ -281,10 +274,9 @@ A tool closure can contain another `think()` call, enabling multi-agent patterns
     "deep_analysis",
     "Perform deep analysis of a topic",
     async |input: AnalysisInput, _cx| {
-        let result = patchwork.think()
+        let result: String = patchwork.think()
             .text("Provide deep analysis of:")
             .display(&input.topic)
-            .run()
             .await?;
         Ok(result)
     },

@@ -1,10 +1,12 @@
 //! The main Patchwork struct that wraps a Component.
 
 use sacp::{
-    ClientToAgent, Component, JrConnectionCx,
+    ClientToAgent, Component, JrConnectionCx, NullResponder,
     schema::{InitializeRequest, InitializeResponse},
 };
 use sacp_conductor::McpBridgeMode;
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, instrument};
@@ -70,7 +72,10 @@ impl Patchwork {
     ///
     /// Returns a [`ThinkBuilder`] that can be used to compose the prompt
     /// and register tools. The builder is consumed when awaited.
-    pub fn think(&self) -> ThinkBuilder {
+    pub fn think<'bound, Output>(&self) -> ThinkBuilder<'bound, NullResponder, Output>
+    where
+        Output: Send + JsonSchema + DeserializeOwned + 'static,
+    {
         ThinkBuilder::new(self.cx.clone())
     }
 }

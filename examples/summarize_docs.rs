@@ -110,7 +110,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .text("Summarize this markdown file in one sentence and list the key topics:")
             .text("\n\n")
             .display(&contents)
-            .run()
             .await?;
 
         println!("  Summary: {}", summary.summary);

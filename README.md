@@ -23,7 +23,6 @@ async fn main() -> Result<(), patchwork::Error> {
         let summary: String = patchwork.think()
             .text("Summarize in one sentence:")
             .display(&contents)
-            .run()
             .await?;
 
         println!("{}: {}", entry.path().display(), summary);
