@@ -3,16 +3,16 @@
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
 
-use sacp::mcp_server::{McpContext, McpServer, McpServerBuilder};
+use sacp::mcp_server::{McpConnectionTo, McpServer, McpServerBuilder};
 use sacp::schema::{
     PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification,
 };
-use sacp::util::MatchMessage;
-use sacp::{BoxFuture, ClientToAgent, JrConnectionCx, JrResponder, NullResponder};
+use sacp::util::MatchDispatch;
+use sacp::{Agent, BoxFuture, ConnectionTo, NullRun, RunWithConnectionTo};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::Error;
 
@@ -20,14 +20,14 @@ use crate::Error;
 ///
 /// Created via [`Patchwork::think`](crate::Patchwork::think).
 ///
-/// The type parameter `R` tracks the responder chain for registered tools,
+/// The type parameter `Run` tracks the responder chain for registered tools,
 /// allowing tools to capture references from the stack frame.
-pub struct ThinkBuilder<'bound, R: JrResponder<ClientToAgent>, Output> {
-    cx: JrConnectionCx<ClientToAgent>,
+pub struct ThinkBuilder<'bound, Output, Run: RunWithConnectionTo<Agent> = NullRun> {
+    cx: ConnectionTo<Agent>,
     segments: Vec<Segment>,
-    server: McpServerBuilder<ClientToAgent, R>,
+    server: McpServerBuilder<Agent, Run>,
     explicit_spacing: bool,
-    phantom: PhantomData<fn(&'bound R) -> Output>,
+    phantom: PhantomData<fn(&'bound Run) -> Output>,
 }
 
 /// A segment of the prompt being built.
@@ -36,11 +36,11 @@ enum Segment {
     ToolReference(String),
 }
 
-impl<'bound, Output> ThinkBuilder<'bound, NullResponder, Output>
+impl<'bound, Output> ThinkBuilder<'bound, Output, NullRun>
 where
     Output: Send + JsonSchema + DeserializeOwned + 'static,
 {
-    pub(crate) fn new(cx: JrConnectionCx<ClientToAgent>) -> Self {
+    pub(crate) fn new(cx: ConnectionTo<Agent>) -> Self {
         Self {
             cx,
             segments: Vec::new(),
@@ -63,7 +63,7 @@ where
     }
 }
 
-impl<'bound, R: JrResponder<ClientToAgent>, Output> ThinkBuilder<'bound, R, Output>
+impl<'bound, Output, Run: RunWithConnectionTo<Agent>> ThinkBuilder<'bound, Output, Run>
 where
     Output: Send + JsonSchema + DeserializeOwned + 'static,
 {
@@ -135,7 +135,7 @@ where
 
     /// Register a tool and embed a reference to it in the prompt.
     ///
-    /// The tool closure receives the input and an [`McpContext`], and returns
+    /// The tool closure receives the input and an [`McpConnectionTo`], and returns
     /// the output. Both input and output must implement [`JsonSchema`] for
     /// the LLM to understand the expected types.
     ///
@@ -171,16 +171,16 @@ where
         description: &str,
         func: F,
         tool_future_hack: H,
-    ) -> ThinkBuilder<'bound, impl JrResponder<ClientToAgent>, Output>
+    ) -> ThinkBuilder<'bound, Output, impl RunWithConnectionTo<Agent>>
     where
         I: JsonSchema + DeserializeOwned + Send + 'static,
         O: JsonSchema + Serialize + Send + 'static,
-        F: AsyncFnMut(I, McpContext<ClientToAgent>) -> Result<O, sacp::Error> + Send,
+        F: AsyncFnMut(I, McpConnectionTo<Agent>) -> Result<O, sacp::Error> + Send,
         H: for<'a> Fn(
                 &'a mut F,
                 I,
-                McpContext<ClientToAgent>,
-            ) -> sacp::BoxFuture<'a, Result<O, sacp::Error>>
+                McpConnectionTo<Agent>,
+            ) -> BoxFuture<'a, Result<O, sacp::Error>>
             + Send
             + 'static,
     {
@@ -210,16 +210,16 @@ where
         description: &str,
         func: F,
         tool_future_hack: H,
-    ) -> ThinkBuilder<'bound, impl JrResponder<ClientToAgent>, Output>
+    ) -> ThinkBuilder<'bound, Output, impl RunWithConnectionTo<Agent>>
     where
         I: JsonSchema + DeserializeOwned + Send + 'static,
         O: JsonSchema + Serialize + Send + 'static,
-        F: AsyncFnMut(I, McpContext<ClientToAgent>) -> Result<O, sacp::Error> + Send,
+        F: AsyncFnMut(I, McpConnectionTo<Agent>) -> Result<O, sacp::Error> + Send,
         H: for<'a> Fn(
                 &'a mut F,
                 I,
-                McpContext<ClientToAgent>,
-            ) -> sacp::BoxFuture<'a, Result<O, sacp::Error>>
+                McpConnectionTo<Agent>,
+            ) -> BoxFuture<'a, Result<O, sacp::Error>>
             + Send
             + 'static,
     {
@@ -235,129 +235,112 @@ where
         }
     }
 
-    /// Execute the think block and return the result.
-    ///
-    /// The return type `T` must implement [`JsonSchema`] so the LLM knows
-    /// the expected output format. The LLM will call a `return_result` tool
-    /// with the result.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let result: String = patchwork.think()
-    ///     .text("Say hello to Alice")
-    ///     .run()
-    ///     .await?;
-    /// ```
-    #[instrument(name = "ThinkBuilder::run", skip_all)]
-    async fn run<T>(self) -> Result<T, Error>
-    where
-        T: JsonSchema + DeserializeOwned + Send + 'static,
-        R: Send,
-    {
-        let prompt = self.build_prompt();
-        let cx = self.cx;
-
-        info!(prompt_len = prompt.len(), "executing think block");
-        trace!(prompt = %prompt, "full prompt");
-
-        // Use a Mutex to store the result from the return_result tool
-        let mut output = None;
-
-        // Add the return_result tool
-        let server = self.server.tool_fn_mut(
-            "return_result",
-            "Return the final result. Call this when you have completed the task.",
-            async |input: ReturnResultInput<T>, _cx| {
-                debug!("return_result tool invoked");
-                output = Some(input.result);
-                Ok(ReturnResultOutput { success: true })
-            },
-            sacp::tool_fn_mut!(),
-        );
-
-        // Create a session with the MCP server and run it
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
-        cx.build_session(&cwd)
-            .with_mcp_server(server.build())?
-            .block_task()
-            .run_until(async |mut session| {
-                session.send_prompt(&prompt)?;
-                tracing::info!(?prompt, "sending prompt");
-
-                // Wait for updates until we get a stop reason
-                loop {
-                    let update = session.read_update().await?;
-                    trace!(?update, "received session update");
-                    match update {
-                        sacp::SessionMessage::StopReason(reason) => {
-                            debug!(?reason, "session stopped");
-                            break;
-                        }
-                        sacp::SessionMessage::SessionMessage(message) => {
-                            MatchMessage::new(message)
-                                .if_notification(async |notification: SessionNotification| {
-                                    tracing::debug!(?notification, "received session notification");
-                                    Ok(())
-                                })
-                                .await
-                                .if_request(
-                                    async |request: RequestPermissionRequest, request_cx| {
-                                        tracing::debug!(
-                                            ?request,
-                                            "received tool use permission request"
-                                        );
-                                        // approve all tool usage
-                                        let option =
-                                            request.options.iter().find(|o| match o.kind {
-                                                PermissionOptionKind::AllowOnce
-                                                | PermissionOptionKind::AllowAlways => true,
-                                                PermissionOptionKind::RejectOnce
-                                                | PermissionOptionKind::RejectAlways => false,
-                                                _ => false,
-                                            });
-                                        let outcome = option
-                                            .map(|o| {
-                                                RequestPermissionOutcome::Selected(
-                                                    SelectedPermissionOutcome::new(
-                                                        o.option_id.clone(),
-                                                    ),
-                                                )
-                                            })
-                                            .unwrap_or(RequestPermissionOutcome::Cancelled);
-                                        request_cx.respond(RequestPermissionResponse::new(outcome))
-                                    },
-                                )
-                                .await
-                                .otherwise_ignore()?
-                        }
-                        _ => continue,
-                    }
-                }
-                Ok(())
-            })
-            .await?;
-
-        if output.is_some() {
-            info!("think block completed successfully");
-        } else {
-            warn!("think block completed but no result was returned");
-        }
-
-        output.ok_or(Error::NoResult)
-    }
 }
 
-impl<'bound, R: JrResponder<ClientToAgent>, Output> IntoFuture for ThinkBuilder<'bound, R, Output>
+impl<'bound, Output, Run: RunWithConnectionTo<Agent>> IntoFuture for ThinkBuilder<'bound, Output, Run>
 where
     Output: Send + JsonSchema + DeserializeOwned + 'static,
+    Run: Send,
 {
     type Output = Result<Output, Error>;
 
     type IntoFuture = BoxFuture<'bound, Result<Output, Error>>;
 
     fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.run())
+        Box::pin(async move {
+            // Build prompt before consuming server
+            let prompt = self.build_prompt();
+            let cx = self.cx;
+
+            // Use a cell to store the result from the return_result tool
+            let mut output: Option<Output> = None;
+
+            // Add the return_result tool
+            let server = self.server.tool_fn_mut(
+                "return_result",
+                "Return the final result. Call this when you have completed the task.",
+                async |input: ReturnResultInput<Output>, _cx| {
+                    debug!("return_result tool invoked");
+                    output = Some(input.result);
+                    Ok(ReturnResultOutput { success: true })
+                },
+                sacp::tool_fn_mut!(),
+            );
+
+            info!(prompt_len = prompt.len(), "executing think block");
+            trace!(prompt = %prompt, "full prompt");
+
+            // Create a session with the MCP server and run it
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+
+            cx.build_session(&cwd)
+                .with_mcp_server(server.build())?
+                .block_task()
+                .run_until(async |mut session| {
+                    session.send_prompt(&prompt)?;
+                    tracing::info!(?prompt, "sending prompt");
+
+                    // Wait for updates until we get a stop reason
+                    loop {
+                        let update = session.read_update().await?;
+                        trace!(?update, "received session update");
+                        match update {
+                            sacp::SessionMessage::StopReason(reason) => {
+                                debug!(?reason, "session stopped");
+                                break;
+                            }
+                            sacp::SessionMessage::SessionMessage(dispatch) => {
+                                MatchDispatch::new(dispatch)
+                                    .if_notification(async |notification: SessionNotification| {
+                                        tracing::debug!(?notification, "received session notification");
+                                        Ok(())
+                                    })
+                                    .await
+                                    .if_request(
+                                        async |request: RequestPermissionRequest, responder| {
+                                            tracing::debug!(
+                                                ?request,
+                                                "received tool use permission request"
+                                            );
+                                            // approve all tool usage
+                                            let option =
+                                                request.options.iter().find(|o| match o.kind {
+                                                    PermissionOptionKind::AllowOnce
+                                                    | PermissionOptionKind::AllowAlways => true,
+                                                    PermissionOptionKind::RejectOnce
+                                                    | PermissionOptionKind::RejectAlways => false,
+                                                    _ => false,
+                                                });
+                                            let outcome = option
+                                                .map(|o| {
+                                                    RequestPermissionOutcome::Selected(
+                                                        SelectedPermissionOutcome::new(
+                                                            o.option_id.clone(),
+                                                        ),
+                                                    )
+                                                })
+                                                .unwrap_or(RequestPermissionOutcome::Cancelled);
+                                            responder.respond(RequestPermissionResponse::new(outcome))
+                                        },
+                                    )
+                                    .await
+                                    .otherwise_ignore()?
+                            }
+                            _ => continue,
+                        }
+                    }
+                    Ok(())
+                })
+                .await?;
+
+            if output.is_some() {
+                info!("think block completed successfully");
+            } else {
+                warn!("think block completed but no result was returned");
+            }
+
+            output.ok_or(Error::NoResult)
+        })
     }
 }
 

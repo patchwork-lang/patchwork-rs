@@ -1155,9 +1155,9 @@ checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 
 [[package]]
 name = "sacp"
-version = "10.1.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704f40d3c269b30229c34093b658ec80c4fac103281654b3965249c592dd6fa6"
+checksum = "337fd4bd779e666b889032766bd57e46ffbe0fc07657444d67730c32398e20a2"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -1180,9 +1180,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-conductor"
-version = "10.0.1"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f91f2131d781dcd54d0dc380a73d90151cb6e95a7a66b80f3c90af8bcb161ed9"
+checksum = "4bfbba002169f6382d2fa81292e8e3d040facc58df9a3f6170860213f3fd0e23"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -1213,9 +1213,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-derive"
-version = "10.0.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92150f9246c01d501855e34469810a82adc27c416c8d8e21665567f8cd966f29"
+checksum = "ff639847b2093b2b6c441948f510f505cbcc17209e102ec321dc878901e42359"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1224,9 +1224,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-tokio"
-version = "10.1.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efa7ff79ad3e47bd5e9ee668996e2cd53b5ddb99ab9b29366efb964af0943e6d"
+checksum = "33df11d7b3d6bbb6fa348a95f3392ce04569c542bb2e09c5176030ac1c9aae4d"
 dependencies = [
  "futures",
  "sacp",
@@ -1239,9 +1239,9 @@ dependencies = [
 
 [[package]]
 name = "sacp-trace-viewer"
-version = "10.0.0"
+version = "11.0.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc1de10c1c409ff66899faa59ad3e1d576e6177fc80a1f49c476a42cf792d47d"
+checksum = "ee45d6d7d18b20760357706b87c2a18e75c95ee359d8844c6b4b421b3dbd696c"
 dependencies = [
  "anyhow",
  "axum",
