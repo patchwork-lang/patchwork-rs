@@ -4,6 +4,7 @@ use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
 
 use sacp::mcp_server::{McpConnectionTo, McpServer, McpServerBuilder};
+use sacp::role::{HasPeer, Role};
 use sacp::schema::{
     PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification,
@@ -20,12 +21,19 @@ use crate::Error;
 ///
 /// Created via [`Determinishtic::think`](crate::Determinishtic::think).
 ///
+/// The type parameter `R` is the role whose connection we use. It defaults to `Agent`
+/// for backwards compatibility, but can be any role that has `Agent` as a peer
+/// (e.g., `Conductor` when used inside a proxy).
+///
 /// The type parameter `Run` tracks the responder chain for registered tools,
 /// allowing tools to capture references from the stack frame.
-pub struct ThinkBuilder<'bound, Output, Run: RunWithConnectionTo<Agent> = NullRun> {
-    cx: ConnectionTo<Agent>,
+pub struct ThinkBuilder<'bound, Output, R: Role = Agent, Run: RunWithConnectionTo<R> = NullRun>
+where
+    R: HasPeer<Agent>,
+{
+    cx: ConnectionTo<R>,
     segments: Vec<Segment>,
-    server: McpServerBuilder<Agent, Run>,
+    server: McpServerBuilder<R, Run>,
     explicit_spacing: bool,
     phantom: PhantomData<fn(&'bound Run) -> Output>,
 }
@@ -36,11 +44,12 @@ enum Segment {
     ToolReference(String),
 }
 
-impl<'bound, Output> ThinkBuilder<'bound, Output, NullRun>
+impl<'bound, Output, R: Role> ThinkBuilder<'bound, Output, R, NullRun>
 where
+    R: HasPeer<Agent>,
     Output: Send + JsonSchema + DeserializeOwned + 'static,
 {
-    pub(crate) fn new(cx: ConnectionTo<Agent>) -> Self {
+    pub(crate) fn new(cx: ConnectionTo<R>) -> Self {
         Self {
             cx,
             segments: Vec::new(),
@@ -63,8 +72,9 @@ where
     }
 }
 
-impl<'bound, Output, Run: RunWithConnectionTo<Agent>> ThinkBuilder<'bound, Output, Run>
+impl<'bound, Output, R: Role, Run: RunWithConnectionTo<R>> ThinkBuilder<'bound, Output, R, Run>
 where
+    R: HasPeer<Agent>,
     Output: Send + JsonSchema + DeserializeOwned + 'static,
 {
     /// Add literal text to the prompt.
@@ -171,15 +181,15 @@ where
         description: &str,
         func: F,
         tool_future_hack: H,
-    ) -> ThinkBuilder<'bound, Output, impl RunWithConnectionTo<Agent>>
+    ) -> ThinkBuilder<'bound, Output, R, impl RunWithConnectionTo<R>>
     where
         I: JsonSchema + DeserializeOwned + Send + 'static,
         O: JsonSchema + Serialize + Send + 'static,
-        F: AsyncFnMut(I, McpConnectionTo<Agent>) -> Result<O, sacp::Error> + Send,
+        F: AsyncFnMut(I, McpConnectionTo<R>) -> Result<O, sacp::Error> + Send,
         H: for<'a> Fn(
                 &'a mut F,
                 I,
-                McpConnectionTo<Agent>,
+                McpConnectionTo<R>,
             ) -> BoxFuture<'a, Result<O, sacp::Error>>
             + Send
             + 'static,
@@ -210,15 +220,15 @@ where
         description: &str,
         func: F,
         tool_future_hack: H,
-    ) -> ThinkBuilder<'bound, Output, impl RunWithConnectionTo<Agent>>
+    ) -> ThinkBuilder<'bound, Output, R, impl RunWithConnectionTo<R>>
     where
         I: JsonSchema + DeserializeOwned + Send + 'static,
         O: JsonSchema + Serialize + Send + 'static,
-        F: AsyncFnMut(I, McpConnectionTo<Agent>) -> Result<O, sacp::Error> + Send,
+        F: AsyncFnMut(I, McpConnectionTo<R>) -> Result<O, sacp::Error> + Send,
         H: for<'a> Fn(
                 &'a mut F,
                 I,
-                McpConnectionTo<Agent>,
+                McpConnectionTo<R>,
             ) -> BoxFuture<'a, Result<O, sacp::Error>>
             + Send
             + 'static,
@@ -237,8 +247,9 @@ where
 
 }
 
-impl<'bound, Output, Run: RunWithConnectionTo<Agent>> IntoFuture for ThinkBuilder<'bound, Output, Run>
+impl<'bound, Output, R: Role, Run: RunWithConnectionTo<R>> IntoFuture for ThinkBuilder<'bound, Output, R, Run>
 where
+    R: HasPeer<Agent>,
     Output: Send + JsonSchema + DeserializeOwned + 'static,
     Run: Send,
 {

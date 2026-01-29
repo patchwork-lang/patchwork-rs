@@ -2,6 +2,7 @@
 
 use sacp::{
     Agent, Client, ConnectionTo, ConnectTo,
+    role::{HasPeer, Role},
     schema::{InitializeRequest, InitializeResponse, ProtocolVersion},
 };
 use sacp_conductor::{AgentOnly, ConductorImpl, McpBridgeMode};
@@ -15,21 +16,70 @@ use crate::ThinkBuilder;
 
 /// The main entry point for determinishtic operations.
 ///
-/// Wraps a sacp [`ConnectTo`] component and provides the [`think`](Self::think) method
+/// Wraps a sacp [`ConnectionTo`] component and provides the [`think`](Self::think) method
 /// for creating LLM-powered reasoning blocks.
 ///
-/// The connection runs in a background task and is cancelled when `Determinishtic`
-/// is dropped.
-pub struct Determinishtic {
-    cx: ConnectionTo<Agent>,
-    task: JoinHandle<Result<(), sacp::Error>>,
+/// The type parameter `R` is the role whose connection we hold. It defaults to `Agent`
+/// for backwards compatibility with code that creates its own connection via [`new`](Self::new).
+/// When using an existing connection (e.g., from inside a proxy), use [`from_connection`](Self::from_connection)
+/// which accepts any role that can communicate with an agent.
+///
+/// When created via `new`, the connection runs in a background task and is cancelled
+/// when `Determinishtic` is dropped.
+pub struct Determinishtic<R: Role = Agent>
+where
+    R: HasPeer<Agent>,
+{
+    cx: ConnectionTo<R>,
+    task: Option<JoinHandle<Result<(), sacp::Error>>>,
 }
 
-impl Determinishtic {
+impl<R: Role> Determinishtic<R>
+where
+    R: HasPeer<Agent>,
+{
+    /// Create from an existing connection.
+    ///
+    /// Use this when you already have a connection to an agent (e.g., from inside
+    /// an ACP proxy or MCP tool handler). The connection is borrowed - no background
+    /// task is spawned, and the connection lifecycle is managed by the caller.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Inside an MCP tool handler
+    /// async fn my_tool(cx: McpConnectionTo<Conductor>) -> Result<Output, Error> {
+    ///     let d = Determinishtic::from_connection(cx.connection_to());
+    ///     let result: MyOutput = d.think()
+    ///         .text("Do something")
+    ///         .await?;
+    ///     Ok(result)
+    /// }
+    /// ```
+    pub fn from_connection(cx: ConnectionTo<R>) -> Self {
+        Self { cx, task: None }
+    }
+
+    /// Start building a think block.
+    ///
+    /// Returns a [`ThinkBuilder`] that can be used to compose the prompt
+    /// and register tools. The builder is consumed when awaited.
+    pub fn think<'bound, Output>(&self) -> ThinkBuilder<'bound, Output, R>
+    where
+        Output: Send + JsonSchema + DeserializeOwned + 'static,
+    {
+        ThinkBuilder::new(self.cx.clone())
+    }
+}
+
+impl Determinishtic<Agent> {
     /// Create a new Determinishtic instance from a sacp ConnectTo component.
     ///
     /// This spawns a background task to run the connection to the agent.
     /// The component will be used to communicate with an LLM agent.
+    ///
+    /// For use inside proxies where you already have a connection, use
+    /// [`from_connection`](Self::from_connection) instead.
     #[instrument(name = "Determinishtic::new", skip_all)]
     pub async fn new(
         component: impl ConnectTo<Client> + 'static,
@@ -63,23 +113,17 @@ impl Determinishtic {
             .block_task()
             .await?;
 
-        Ok(Self { cx, task })
-    }
-
-    /// Start building a think block.
-    ///
-    /// Returns a [`ThinkBuilder`] that can be used to compose the prompt
-    /// and register tools. The builder is consumed when awaited.
-    pub fn think<'bound, Output>(&self) -> ThinkBuilder<'bound, Output>
-    where
-        Output: Send + JsonSchema + DeserializeOwned + 'static,
-    {
-        ThinkBuilder::new(self.cx.clone())
+        Ok(Self { cx, task: Some(task) })
     }
 }
 
-impl Drop for Determinishtic {
+impl<R: Role> Drop for Determinishtic<R>
+where
+    R: HasPeer<Agent>,
+{
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(ref task) = self.task {
+            task.abort();
+        }
     }
 }
