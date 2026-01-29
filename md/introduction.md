@@ -1,6 +1,12 @@
 # determinishtic
 
-An easy API to integrate deterministic computation with LLM-powered reasoning.
+Blend deterministic Rust code with LLM-powered reasoning.
+
+> *Hat tip to [Dave Herman](https://github.com/dherman) for the name.*
+
+## Philosophy
+
+**Do things deterministically that are deterministic.** File discovery, iteration, and I/O happen in Rust. Summarization, analysis, and judgment happen via the LLM.
 
 ```rust
 use determinishtic::Determinishtic;

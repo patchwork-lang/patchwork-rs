@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 description = "Blend deterministic Rust code with LLM-powered reasoning"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/nikomatsakis/determinishtic"
+documentation = "https://docs.rs/determinishtic"
+readme = "README.md"
+keywords = ["llm", "ai", "mcp", "acp", "async"]
+categories = ["asynchronous", "development-tools"]
 
 [dependencies]
 # ACP/MCP integration
